@@ -1,74 +1,119 @@
 from fastapi import FastAPI, HTTPException, status, Response
-from fastapi.params import Body
 from pydantic import BaseModel
-from datetime import datetime
-from enum import Enum
 from typing import Optional
+import time
+import datetime
+
+import psycopg2
+
+# connect to database
+while(True):
+    try:
+        conn = psycopg2.connect(database="fastapi", user="postgres", password="Smileok21")
+        cursor = conn.cursor()
+        print("Success connection")
+        break
+    except Exception as error:
+        print("Connect failed")
+        print(f"Error: {error}")
+        time.sleep(2)
+
 
 app = FastAPI()
 
-my_posts = [{"id": 1, "name": "Ninh Binh"}, 
-            {"id": 2, "name": "Dak Lak"}]
+# define model
+class Post(BaseModel):
+    title: str
+    content: str | None
+    published: bool = True
 
-class District(BaseModel):
-    id: Optional[int] = None
-    name: str
-
-def find_post(id: int) -> District:
-    for post in my_posts:
-        if post['id'] == id:
-            return post
-    return None
-        
-
-def find_index_post(id: int) -> int:
-    for i, post in enumerate(my_posts):
-        if post['id'] == id:
-            return i
-    return None
 
 @app.get("/posts")
 def get_posts():
-    return {"Posts": my_posts}
+    cursor.execute("""
+                   SELECT * FROM posts;
+                   """)
+    posts = cursor.fetchall()
+    return {"Posts": posts}
+
 
 @app.get("/post/lastest")
 def get_last_post():
-    return {"Lastest post": my_posts[len(my_posts)-1]}
+    cursor.execute("""
+                   SELECT * FROM  posts;
+                   """)
+    lastest_post = cursor.fetchall()[-1]
+    return {"Lastest post": lastest_post}
+
 
 @app.get('/post/{id}')
 def get_post(id: int):
-    post = find_post(id)
+    cursor.execute("""
+                   SELECT * FROM posts
+                   WHERE id = %s;""", str(id))
+    post = cursor.fetchone()
     if not post:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail=f"Not found post {id}")
-    return {'Post': post}
+                        detail=f"Not found post {id}")
+    return {"post": post}
+
 
 @app.post("/post", status_code=status.HTTP_201_CREATED)
-def create_post(post: District):
-    my_posts.append(post.model_dump())
-    return get_last_post()
+def create_post(post: Post):
+    cursor.execute("""
+                   INSERT INTO posts (title, content, published) 
+                   VALUES (%s, %s, %s) RETURNING *;""",
+                   (post.title, post.content, post.published))
+    new_post = cursor.fetchone()
+    conn.commit()
+    return new_post
+
 
 @app.put("/post/{id}", status_code=status.HTTP_204_NO_CONTENT)
-def update_post(id: int, post: District):
-    post_index = find_index_post(id)
+def update_post(id: int, post: Post):
+    cursor.execute("""
+                   UPDATE posts
+                   SET title = %s, content = %s, published = %s
+                   WHERE id = %s 
+                   RETURNING *;""", (post.title, post.content, post.published, str(id)))
+    updated_post = cursor.fetchone()
+    conn.commit()
     
-    if not post_index:
+    if not updated_post:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, 
                             detail=f"Not found post {id}")
     
-    post.id = id
-    my_posts[post_index] = post
-    return f"Update sucessfull"
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
 
 @app.delete("/post/{id}")
 def delete_post(id: int):
-    post_index = find_index_post(id)
+    cursor.execute("""
+                   DELETE FROM posts
+                   WHERE id = %s RETURNING *;""", str(id))
+    deleted_post = cursor.fetchone() 
+    conn.commit()   
 
-    if not post_index:
+    if not deleted_post:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail=f"Not found post {id}")
-    my_posts.pop(post_index)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+# # ====================================================
+
+
+# def find_post(id: int) -> Post:
+#     for post in my_posts:
+#         if post['id'] == id:
+#             return post
+#     return None
+        
+
+# def find_index_post(id: int) -> int:
+#     for i, post in enumerate(my_posts):
+#         if post['id'] == id:
+#             return i
+#     return None
 
 
 
